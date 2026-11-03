@@ -5,9 +5,9 @@ First commit
 
 Test commit
 
-## Steps to run test_fpga_core
+## Steps to run test_fpga_core.py
 
-How to run `example/VCU108/fpga_10g/tb/fpga_core/test_fpga_core`
+How to run `example/VCU108/fpga_10g/tb/fpga_core/test_fpga_core.py`
 
 Open terminal in project working directory
 First:
