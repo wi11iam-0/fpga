@@ -672,3 +672,11 @@ docs/md_to_pdf
 docs/md_to_pdf/
 docs/future_weeks
 .DS_Store
+### cocotb / HDL simulation outputs
+# Verilator/Icarus build directory (generated C++, objects, sim executable)
+sim_build/
+# cocotb test results
+results.xml
+# Waveform dumps
+*.fst
+*.vcd

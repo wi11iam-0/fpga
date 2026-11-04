@@ -1,6 +1,6 @@
-pytest==7.2.1
-pytest-xdist==3.1.0
-pytest-split==0.8.0
+pytest==9.2.0
+pytest-xdist==3.8.0
+pytest-split==0.11.0
 cocotb==1.9.2
 cocotb-bus==0.2.1
 cocotb-test==0.2.4
