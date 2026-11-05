@@ -1,0 +1,98 @@
+[*]
+[*] GTKWave save file: 10G MAC RX/TX view for test_fpga_core
+[*] Open from this dir:  gtkwave dump.fst mac_10g.gtkw
+[*] Markers: A=UDP in  B=ARP req out  C=ARP resp in  D=UDP echo out
+[*]
+[dumpfile] "dump.fst"
+[savefile] "mac_10g.gtkw"
+[timestart] 0
+[size] 1600 900
+[pos] -1 -1
+*-12.000000 122880 122880 3527680 3555840 4047360 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 220
+[signals_width] 280
+[sst_expanded] 1
+[sst_vpaned_height] 250
+@800200
+-Clk/Rst
+@28
+fpga_core.rst
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_clk
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_clk
+fpga_core.eth_mac_10g_fifo_inst.logic_clk
+@1000200
+-Clk/Rst
+@800200
+-RX: XGMII in
+@200
+-rxc bit=1: ctrl byte
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_rxc[7:0]
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_rxd[63:0]
+@1000200
+-RX: XGMII in
+@800200
+-RX: MAC out
+@28
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_axis_tvalid
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_axis_tlast
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_axis_tuser[0:0]
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_axis_tkeep[7:0]
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.rx_axis_tdata[63:0]
+@1000200
+-RX: MAC out
+@800200
+-RX: FIFO out
+@200
+-to stack, logic_clk
+@28
+fpga_core.eth_mac_10g_fifo_inst.rx_axis_tvalid
+fpga_core.eth_mac_10g_fifo_inst.rx_axis_tready
+fpga_core.eth_mac_10g_fifo_inst.rx_axis_tlast
+@22
+fpga_core.eth_mac_10g_fifo_inst.rx_axis_tdata[63:0]
+@1000200
+-RX: FIFO out
+@800200
+-ARP stall
+@200
+-cache clear after rst
+@28
+fpga_core.udp_complete_inst.ip_complete_64_inst.arp_inst.arp_cache_inst.clear_cache_reg
+fpga_core.udp_complete_inst.ip_complete_64_inst.arp_inst.arp_cache_inst.query_request_ready
+fpga_core.udp_complete_inst.ip_complete_64_inst.arp_request_valid
+@1000200
+-ARP stall
+@800200
+-TX: FIFO in
+@200
+-from stack, logic_clk
+@28
+fpga_core.eth_mac_10g_fifo_inst.tx_axis_tvalid
+fpga_core.eth_mac_10g_fifo_inst.tx_axis_tready
+fpga_core.eth_mac_10g_fifo_inst.tx_axis_tlast
+@22
+fpga_core.eth_mac_10g_fifo_inst.tx_axis_tdata[63:0]
+@1000200
+-TX: FIFO in
+@800200
+-TX: MAC in
+@28
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_axis_tvalid
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_axis_tready
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_axis_tlast
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_axis_tkeep[7:0]
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.tx_axis_tdata[63:0]
+@1000200
+-TX: MAC in
+@800200
+-TX: XGMII out
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_txc[7:0]
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_txd[63:0]
+@1000200
+-TX: XGMII out
+[pattern_trace] 1
+[pattern_trace] 0
