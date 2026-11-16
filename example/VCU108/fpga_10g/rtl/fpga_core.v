@@ -111,7 +111,19 @@ module fpga_core #
     input  wire       uart_rxd,
     output wire       uart_txd,
     output wire       uart_rts,
-    input wire        uart_cts
+    input wire        uart_cts,
+
+    /*
+     * PTP hardware timestamping (QSFP28 lane 1 MAC)
+     * All outputs are synchronous to clk
+     */
+    input  wire        ptp_sample_clk,   // free-running, unrelated to clk and the QSFP clocks
+    output wire [95:0] ptp_ts_96,        // current PTP time
+    output wire [95:0] rx_ptp_ts_96,     // RX timestamp, valid on the first word of each frame
+    output wire        rx_ptp_ts_valid,  //   leaving the MAC RX FIFO
+    output wire [95:0] tx_ptp_ts_96,     // TX timestamp of the frame identified by tx_ptp_ts_tag
+    output wire [15:0] tx_ptp_ts_tag,
+    output wire        tx_ptp_ts_valid
 );
 
 // AXI between MAC and Ethernet modules
@@ -121,6 +133,7 @@ wire mac_rx_axis_tvalid;
 wire mac_rx_axis_tready;
 wire mac_rx_axis_tlast;
 wire mac_rx_axis_tuser;
+wire [96:0] mac_rx_axis_tuser_ptp;  // {RX timestamp, bad frame}
 
 wire [63:0] mac_tx_axis_tdata;
 wire [7:0] mac_tx_axis_tkeep;
@@ -128,6 +141,7 @@ wire mac_tx_axis_tvalid;
 wire mac_tx_axis_tready;
 wire mac_tx_axis_tlast;
 wire mac_tx_axis_tuser;
+wire [16:0] mac_tx_axis_tuser_ptp;  // {TX timestamp tag, bad frame}
 
 wire [63:0] rx_axis_tdata;
 wire [7:0] rx_axis_tkeep;
@@ -373,6 +387,96 @@ assign qsfp_txc_3 = 8'hff;
 assign qsfp_txd_4 = 64'h0707070707070707;
 assign qsfp_txc_4 = 8'hff;
 
+// PTP hardware clock (PHC)
+// Free-running 96 bit time of day: {seconds[47:0], 2'b00, ns[29:0], fractional ns[15:0]}
+// It starts from 0 at reset and advances by one clk period (6.4 ns) per cycle.
+// The set/adjust inputs are tied off; they are where a PTP servo would connect
+// to synchronise this clock to a PTP master.
+wire ptp_ts_step;
+
+ptp_clock #(
+    // 6.4 ns per cycle = 6 ns + 0x6666/2^16 ns, plus 2/2^16 ns every 5 cycles
+    // to make up the rounding error
+    .PERIOD_NS(4'h6),
+    .PERIOD_FNS(16'h6666),
+    .DRIFT_ENABLE(1),
+    .DRIFT_NS(4'h0),
+    .DRIFT_FNS(16'h0002),
+    .DRIFT_RATE(16'h0005)
+)
+ptp_clock_inst (
+    .clk(clk),
+    .rst(rst),
+
+    // set time
+    .input_ts_96(96'd0),
+    .input_ts_96_valid(1'b0),
+    .input_ts_64(64'd0),
+    .input_ts_64_valid(1'b0),
+
+    // set period (rate adjustment)
+    .input_period_ns(4'd0),
+    .input_period_fns(16'd0),
+    .input_period_valid(1'b0),
+
+    // offset adjustment
+    .input_adj_ns(4'd0),
+    .input_adj_fns(16'd0),
+    .input_adj_count(16'd0),
+    .input_adj_valid(1'b0),
+    .input_adj_active(),
+
+    // drift adjustment
+    .input_drift_ns(4'd0),
+    .input_drift_fns(16'd0),
+    .input_drift_rate(16'd0),
+    .input_drift_valid(1'b0),
+
+    .output_ts_96(ptp_ts_96),
+    .output_ts_64(),
+    .output_ts_step(ptp_ts_step),
+    .output_pps()
+);
+
+// RX timestamp
+// With PTP enabled, the MAC puts the timestamp of each received frame in
+// tuser[96:1]. The rest of the design only carries the bad frame flag
+// (tuser[0]), so the timestamp is taken off here, at the MAC RX FIFO output.
+ptp_ts_extract #(
+    .TS_WIDTH(96),
+    .TS_OFFSET(1),
+    .USER_WIDTH(97)
+)
+rx_ptp_ts_extract_inst (
+    .clk(clk),
+    .rst(rst),
+    .s_axis_tvalid(mac_rx_axis_tvalid && mac_rx_axis_tready),
+    .s_axis_tlast(mac_rx_axis_tlast),
+    .s_axis_tuser(mac_rx_axis_tuser_ptp),
+    .m_axis_ts(rx_ptp_ts_96),
+    .m_axis_ts_valid(rx_ptp_ts_valid)
+);
+
+assign mac_rx_axis_tuser = mac_rx_axis_tuser_ptp[0];
+
+// TX timestamp tag
+// Every transmitted frame is timestamped. The MAC returns each timestamp
+// together with the tag that was in tuser[16:1] of the frame, so the two can
+// be matched up. The tag is a count of the frames handed to the MAC.
+reg [15:0] tx_ptp_tag_reg = 16'd0;
+
+always @(posedge clk) begin
+    if (mac_tx_axis_tvalid && mac_tx_axis_tready && mac_tx_axis_tlast) begin
+        tx_ptp_tag_reg <= tx_ptp_tag_reg + 1;
+    end
+
+    if (rst) begin
+        tx_ptp_tag_reg <= 16'd0;
+    end
+end
+
+assign mac_tx_axis_tuser_ptp = {tx_ptp_tag_reg, mac_tx_axis_tuser};
+
 eth_mac_10g_fifo #(
     .ENABLE_PADDING(1),
     .ENABLE_DIC(1),
@@ -380,7 +484,13 @@ eth_mac_10g_fifo #(
     .TX_FIFO_DEPTH(4096),
     .TX_FRAME_FIFO(1),
     .RX_FIFO_DEPTH(4096),
-    .RX_FRAME_FIFO(1)
+    .RX_FRAME_FIFO(1),
+    .PTP_TS_ENABLE(1),
+    .PTP_TS_FMT_TOD(1),
+    .PTP_TS_WIDTH(96),
+    .TX_PTP_TS_CTRL_IN_TUSER(0),
+    .TX_PTP_TAG_ENABLE(1),
+    .PTP_TAG_WIDTH(16)
 )
 eth_mac_10g_fifo_inst (
     .rx_clk(qsfp_rx_clk_1),
@@ -389,20 +499,26 @@ eth_mac_10g_fifo_inst (
     .tx_rst(qsfp_tx_rst_1),
     .logic_clk(clk),
     .logic_rst(rst),
+    .ptp_sample_clk(ptp_sample_clk),
 
     .tx_axis_tdata(mac_tx_axis_tdata),
     .tx_axis_tkeep(mac_tx_axis_tkeep),
     .tx_axis_tvalid(mac_tx_axis_tvalid),
     .tx_axis_tready(mac_tx_axis_tready),
     .tx_axis_tlast(mac_tx_axis_tlast),
-    .tx_axis_tuser(mac_tx_axis_tuser),
+    .tx_axis_tuser(mac_tx_axis_tuser_ptp),
+
+    .m_axis_tx_ptp_ts_96(tx_ptp_ts_96),
+    .m_axis_tx_ptp_ts_tag(tx_ptp_ts_tag),
+    .m_axis_tx_ptp_ts_valid(tx_ptp_ts_valid),
+    .m_axis_tx_ptp_ts_ready(1'b1),
 
     .rx_axis_tdata(mac_rx_axis_tdata),
     .rx_axis_tkeep(mac_rx_axis_tkeep),
     .rx_axis_tvalid(mac_rx_axis_tvalid),
     .rx_axis_tready(mac_rx_axis_tready),
     .rx_axis_tlast(mac_rx_axis_tlast),
-    .rx_axis_tuser(mac_rx_axis_tuser),
+    .rx_axis_tuser(mac_rx_axis_tuser_ptp),
 
     .xgmii_rxd(qsfp_rxd_1),
     .xgmii_rxc(qsfp_rxc_1),
@@ -417,6 +533,9 @@ eth_mac_10g_fifo_inst (
     .rx_fifo_overflow(),
     .rx_fifo_bad_frame(),
     .rx_fifo_good_frame(),
+
+    .ptp_ts_96(ptp_ts_96),
+    .ptp_ts_step(ptp_ts_step),
 
     .cfg_ifg(8'd12),
     .cfg_tx_enable(1'b1),

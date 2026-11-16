@@ -507,11 +507,13 @@ gig_eth_pcspma (
 
 wire [7:0] led_int;
 
+wire [95:0] ptp_ts_96;
+
 assign led[0] = sw[0] ? qsfp_rx_block_lock_1 : led_int[0];
 assign led[1] = sw[0] ? qsfp_rx_block_lock_2 : led_int[1];
 assign led[2] = sw[0] ? qsfp_rx_block_lock_3 : led_int[2];
 assign led[3] = sw[0] ? qsfp_rx_block_lock_4 : led_int[3];
-assign led[4] = sw[0] ? 1'b0 : led_int[4];
+assign led[4] = sw[0] ? ptp_ts_96[48] : led_int[4];  // PTP seconds LSB: toggles once per second
 assign led[5] = sw[0] ? 1'b0 : led_int[5];
 assign led[6] = sw[0] ? 1'b0 : led_int[6];
 assign led[7] = sw[0] ? 1'b0 : led_int[7];
@@ -589,7 +591,18 @@ core_inst (
     .uart_rxd(uart_rxd_int),
     .uart_txd(uart_txd),
     .uart_rts(uart_rts),
-    .uart_cts(uart_cts_int)
+    .uart_cts(uart_cts_int),
+    /*
+     * PTP hardware timestamping
+     * The RX/TX timestamp streams are not used by anything yet
+     */
+    .ptp_sample_clk(clk_125mhz_int),
+    .ptp_ts_96(ptp_ts_96),
+    .rx_ptp_ts_96(),
+    .rx_ptp_ts_valid(),
+    .tx_ptp_ts_96(),
+    .tx_ptp_ts_tag(),
+    .tx_ptp_ts_valid()
 );
 
 endmodule

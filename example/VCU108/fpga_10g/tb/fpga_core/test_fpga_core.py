@@ -48,6 +48,10 @@ class TB:
 
         cocotb.start_soon(Clock(dut.clk, 6.4, units="ns").start())
 
+        # PTP sample clock: only has to be unrelated to the other clocks
+        # (the board uses its 125 MHz clock)
+        cocotb.start_soon(Clock(dut.ptp_sample_clk, 9.9, units="ns").start())
+
         # Ethernet
         cocotb.start_soon(Clock(dut.phy_gmii_clk, 8, units="ns").start())
 
@@ -287,6 +291,9 @@ def test_fpga_core(request):
         os.path.join(eth_rtl_dir, "axis_xgmii_rx_64.v"),
         os.path.join(eth_rtl_dir, "axis_xgmii_tx_64.v"),
         os.path.join(eth_rtl_dir, "lfsr.v"),
+        os.path.join(eth_rtl_dir, "ptp_clock.v"),
+        os.path.join(eth_rtl_dir, "ptp_clock_cdc.v"),
+        os.path.join(eth_rtl_dir, "ptp_ts_extract.v"),
         os.path.join(eth_rtl_dir, "eth_axis_rx.v"),
         os.path.join(eth_rtl_dir, "eth_axis_tx.v"),
         os.path.join(eth_rtl_dir, "udp_complete_64.v"),

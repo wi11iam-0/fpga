@@ -30,6 +30,9 @@ SYN_FILES += lib/eth/rtl/eth_phy_10g_tx_if.v
 SYN_FILES += lib/eth/rtl/xgmii_baser_dec_64.v
 SYN_FILES += lib/eth/rtl/xgmii_baser_enc_64.v
 SYN_FILES += lib/eth/rtl/lfsr.v
+SYN_FILES += lib/eth/rtl/ptp_clock.v
+SYN_FILES += lib/eth/rtl/ptp_clock_cdc.v
+SYN_FILES += lib/eth/rtl/ptp_ts_extract.v
 SYN_FILES += lib/eth/rtl/eth_axis_rx.v
 SYN_FILES += lib/eth/rtl/eth_axis_tx.v
 SYN_FILES += lib/eth/rtl/udp_complete_64.v
@@ -61,6 +64,7 @@ SYN_FILES += lib/eth/lib/axis/rtl/sync_reset.v
 XDC_FILES = fpga.xdc
 XDC_FILES += eth.xdc
 XDC_FILES += lib/eth/syn/vivado/eth_mac_fifo.tcl
+XDC_FILES += lib/eth/syn/vivado/ptp_clock_cdc.tcl
 XDC_FILES += lib/eth/lib/axis/syn/vivado/axis_async_fifo.tcl
 XDC_FILES += lib/eth/lib/axis/syn/vivado/sync_reset.tcl
 
