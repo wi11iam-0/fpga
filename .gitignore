@@ -681,3 +681,7 @@ results.xml
 *.fst
 *.vcd
 *.gtkw
+# ...except saved traces and their layouts under sim_traces/, which are kept in git
+!**/sim_traces/**/*.fst
+!**/sim_traces/**/*.vcd
+!**/sim_traces/**/*.gtkw
