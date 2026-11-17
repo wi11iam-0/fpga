@@ -96,3 +96,7 @@ fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_txd[63:0]
 -TX: XGMII out
 [pattern_trace] 1
 [pattern_trace] 0
+[markername] AUDP in
+[markername] BARP req out
+[markername] CARP resp in
+[markername] DUDP echo out
