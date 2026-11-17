@@ -680,4 +680,4 @@ results.xml
 # Waveform dumps
 *.fst
 *.vcd
-
+*.gtkw
