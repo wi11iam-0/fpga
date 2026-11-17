@@ -1,0 +1,132 @@
+[*]
+[*] GTKWave save file: PTP timestamping view for test_fpga_core (run_test_ptp)
+[*] Generate dump.fst with:  make SIM=verilator clean; make SIM=verilator WAVES=1
+[*] Open from this dir:      gtkwave dump.fst ptp.gtkw
+[*] Markers (first frames of run_test_ptp, when both tests are run):
+[*]   A=PTP CDC locked  B=RX frame start  C=its RX timestamp out
+[*]   D=TX frame start  E=its TX timestamp out
+[*] Timestamps are 96 bit, shown in hex: 12 digits seconds, 8 digits ns, 4 digits fractional ns
+[*]
+[dumpfile] "dump.fst"
+[savefile] "ptp.gtkw"
+[timestart] 164400000000
+[size] 1600 900
+[pos] -1 -1
+*-20.000000 164576000000 87756800000 164576000000 164710400000 165043200000 165088000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 220
+[signals_width] 300
+[sst_expanded] 1
+[sst_vpaned_height] 250
+@800200
+-Clk/Rst
+@28
+fpga_core.rst
+@28
+fpga_core.clk
+@1000200
+-Clk/Rst
+@800200
+-PTP clock
+@200
+-ts = sec12 ns8 fns4 hex
+@22
+fpga_core.ptp_ts_96[95:0]
+@1000200
+-PTP clock
+@800200
+-Time in MAC clk domains
+@28
+fpga_core.eth_mac_10g_fifo_inst.rx_ptp.rx_ptp_cdc.locked
+@22
+fpga_core.eth_mac_10g_fifo_inst.rx_ptp_ts_96[95:0]
+@28
+fpga_core.eth_mac_10g_fifo_inst.tx_ptp.tx_ptp_cdc.locked
+@22
+fpga_core.eth_mac_10g_fifo_inst.tx_ptp_ts_96[95:0]
+@1000200
+-Time in MAC clk domains
+@800200
+-RX: XGMII in
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_rxc[7:0]
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_rxd[63:0]
+@1000200
+-RX: XGMII in
+@800200
+-RX: MAC capture
+@200
+-start_packet: 1=lane0 2=lane4
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_rx_inst.start_packet[1:0]
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_rx_inst.ptp_ts_reg[95:0]
+@1000200
+-RX: MAC capture
+@800200
+-RX: timestamp out
+@200
+-tuser = {ts, bad_frame}
+@28
+fpga_core.mac_rx_axis_tvalid
+@28
+fpga_core.mac_rx_axis_tready
+@28
+fpga_core.mac_rx_axis_tlast
+@22
+fpga_core.mac_rx_axis_tuser_ptp[96:0]
+@28
+fpga_core.rx_ptp_ts_valid
+@22
+fpga_core.rx_ptp_ts_96[95:0]
+@1000200
+-RX: timestamp out
+@800200
+-TX: frame + tag in
+@28
+fpga_core.mac_tx_axis_tvalid
+@28
+fpga_core.mac_tx_axis_tready
+@28
+fpga_core.mac_tx_axis_tlast
+@22
+fpga_core.tx_ptp_tag_reg[15:0]
+@1000200
+-TX: frame + tag in
+@800200
+-TX: XGMII out
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_txc[7:0]
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.xgmii_txd[63:0]
+@1000200
+-TX: XGMII out
+@800200
+-TX: MAC capture
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_tx_inst.start_packet[1:0]
+@28
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_tx_inst.m_axis_ptp_ts_valid
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_tx_inst.m_axis_ptp_ts_tag[15:0]
+@22
+fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_tx_inst.m_axis_ptp_ts[95:0]
+@1000200
+-TX: MAC capture
+@800200
+-TX: timestamp out
+@28
+fpga_core.tx_ptp_ts_valid
+@22
+fpga_core.tx_ptp_ts_tag[15:0]
+@22
+fpga_core.tx_ptp_ts_96[95:0]
+@1000200
+-TX: timestamp out
+[pattern_trace] 1
+[pattern_trace] 0
+[markername] ACDC locked
+[markername] BRX frame start
+[markername] CRX ts out
+[markername] DTX frame start
+[markername] ETX ts out
