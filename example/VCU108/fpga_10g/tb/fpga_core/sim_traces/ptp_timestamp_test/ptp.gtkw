@@ -1,18 +1,18 @@
 [*]
 [*] GTKWave save file: PTP timestamping view for test_fpga_core (run_test_ptp)
-[*] Generate dump.fst with:  make SIM=verilator clean; make SIM=verilator WAVES=1
-[*] Open from this dir:      gtkwave dump.fst ptp.gtkw
-[*] Markers (first frames of run_test_ptp, when both tests are run):
+[*] Generate dump.fst with:  make SIM=verilator clean; make SIM=verilator WAVES=1 TESTCASE=run_test_ptp
+[*] Open from this dir:      gtkwave ptp_test.fst ptp.gtkw
+[*] Markers (first frames of run_test_ptp, run on its own):
 [*]   A=PTP CDC locked  B=RX frame start  C=its RX timestamp out
 [*]   D=TX frame start  E=its TX timestamp out
 [*] Timestamps are 96 bit, shown in hex: 12 digits seconds, 8 digits ns, 4 digits fractional ns
 [*]
 [dumpfile] "dump.fst"
 [savefile] "ptp.gtkw"
-[timestart] 164400000000
+[timestart] 141673600000
 [size] 1600 900
 [pos] -1 -1
-*-20.000000 164576000000 87756800000 164576000000 164710400000 165043200000 165088000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-20.000000 141849600000 65030400000 141849600000 141984000000 142316800000 142361600000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [sst_width] 220
 [signals_width] 300
 [sst_expanded] 1
