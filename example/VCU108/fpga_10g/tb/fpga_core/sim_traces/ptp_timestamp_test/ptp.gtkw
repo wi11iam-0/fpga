@@ -1,18 +1,19 @@
 [*]
 [*] GTKWave save file: PTP timestamping view for test_fpga_core (run_test_ptp)
-[*] Generate dump.fst with:  make SIM=verilator clean; make SIM=verilator WAVES=1 TESTCASE=run_test_ptp
-[*] Open from this dir:      gtkwave ptp_test.fst ptp.gtkw
-[*] Markers (first frames of run_test_ptp, run on its own):
-[*]   A=PTP CDC locked  B=RX frame start  C=its RX timestamp out
-[*]   D=TX frame start  E=its TX timestamp out
+[*] Generate the trace with:  make SIM=verilator WAVES=1 TESTCASE=run_test_ptp
+[*]   (remove sim_build first if the last build was without WAVES=1)
+[*] Open from this dir:         gtkwave ptp_test.fst ptp.gtkw
+[*] Markers (run_test_ptp on its own, rx_clk 200 ppm faster than clk):
+[*]   A both CDCs locked  B first PTP frame starts on XGMII RX  C it reaches the engine port
+[*]   D first PTP frame from the engine starts on XGMII TX  E its TX timestamp comes out
 [*] Timestamps are 96 bit, shown in hex: 12 digits seconds, 8 digits ns, 4 digits fractional ns
 [*]
-[dumpfile] "dump.fst"
+[dumpfile] "ptp_test.fst"
 [savefile] "ptp.gtkw"
-[timestart] 141673600000
+[timestart] 182752202240
 [size] 1600 900
 [pos] -1 -1
-*-20.000000 141849600000 65030400000 141849600000 141984000000 142316800000 142361600000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-20.000000 182952202240 65043200000 182952202240 183072000000 187097600000 187142400000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [sst_width] 220
 [signals_width] 300
 [sst_expanded] 1
@@ -23,6 +24,10 @@
 fpga_core.rst
 @28
 fpga_core.clk
+@28
+fpga_core.qsfp_rx_clk_1
+@28
+fpga_core.qsfp_tx_clk_1
 @1000200
 -Clk/Rst
 @800200
@@ -36,11 +41,11 @@ fpga_core.ptp_ts_96[95:0]
 @800200
 -Time in MAC clk domains
 @28
-fpga_core.eth_mac_10g_fifo_inst.rx_ptp.rx_ptp_cdc.locked
+fpga_core.rx_ptp_locked
 @22
 fpga_core.eth_mac_10g_fifo_inst.rx_ptp_ts_96[95:0]
 @28
-fpga_core.eth_mac_10g_fifo_inst.tx_ptp.tx_ptp_cdc.locked
+fpga_core.tx_ptp_locked
 @22
 fpga_core.eth_mac_10g_fifo_inst.tx_ptp_ts_96[95:0]
 @1000200
@@ -64,35 +69,83 @@ fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_rx_inst.ptp_
 @1000200
 -RX: MAC capture
 @800200
--RX: timestamp out
+-RX: MAC FIFO out
 @200
 -tuser = {ts, bad_frame}
 @28
+fpga_core.mac_fifo_rx_axis_tvalid
+@28
+fpga_core.mac_fifo_rx_axis_tready
+@28
+fpga_core.mac_fifo_rx_axis_tlast
+@22
+fpga_core.mac_fifo_rx_axis_tuser[96:0]
+@22
+fpga_core.mac_fifo_rx_axis_tdata[63:0]
+@1000200
+-RX: MAC FIFO out
+@800200
+-RX: PTP to engine
+@200
+-Ethertype 0x88F7 only
+@28
+fpga_core.ptp_rx_axis_tvalid
+@28
+fpga_core.ptp_rx_axis_tready
+@28
+fpga_core.ptp_rx_axis_tlast
+@22
+fpga_core.ptp_rx_axis_tuser[96:0]
+@22
+fpga_core.ptp_rx_axis_tdata[63:0]
+@1000200
+-RX: PTP to engine
+@800200
+-RX: rest to stack
+@28
 fpga_core.mac_rx_axis_tvalid
 @28
-fpga_core.mac_rx_axis_tready
-@28
 fpga_core.mac_rx_axis_tlast
-@22
-fpga_core.mac_rx_axis_tuser_ptp[96:0]
-@28
-fpga_core.rx_ptp_ts_valid
-@22
-fpga_core.rx_ptp_ts_96[95:0]
 @1000200
--RX: timestamp out
+-RX: rest to stack
 @800200
--TX: frame + tag in
+-TX: PTP from engine
+@200
+-tuser = {tag, ts_en, bad}
+@28
+fpga_core.ptp_tx_axis_tvalid
+@28
+fpga_core.ptp_tx_axis_tready
+@28
+fpga_core.ptp_tx_axis_tlast
+@22
+fpga_core.ptp_tx_axis_tuser[17:0]
+@22
+fpga_core.ptp_tx_axis_tdata[63:0]
+@1000200
+-TX: PTP from engine
+@800200
+-TX: stack frames
 @28
 fpga_core.mac_tx_axis_tvalid
 @28
 fpga_core.mac_tx_axis_tready
 @28
 fpga_core.mac_tx_axis_tlast
-@22
-fpga_core.tx_ptp_tag_reg[15:0]
 @1000200
--TX: frame + tag in
+-TX: stack frames
+@800200
+-TX: merged to MAC
+@28
+fpga_core.mac_fifo_tx_axis_tvalid
+@28
+fpga_core.mac_fifo_tx_axis_tready
+@28
+fpga_core.mac_fifo_tx_axis_tlast
+@22
+fpga_core.mac_fifo_tx_axis_tuser[17:0]
+@1000200
+-TX: merged to MAC
 @800200
 -TX: XGMII out
 @22
@@ -117,6 +170,8 @@ fpga_core.eth_mac_10g_fifo_inst.eth_mac_10g_inst.genblk1.axis_xgmii_tx_inst.m_ax
 -TX: timestamp out
 @28
 fpga_core.tx_ptp_ts_valid
+@28
+fpga_core.tx_ptp_ts_ready
 @22
 fpga_core.tx_ptp_ts_tag[15:0]
 @22
@@ -126,7 +181,7 @@ fpga_core.tx_ptp_ts_96[95:0]
 [pattern_trace] 1
 [pattern_trace] 0
 [markername] ACDC locked
-[markername] BRX frame start
-[markername] CRX ts out
-[markername] DTX frame start
+[markername] BRX PTP start
+[markername] CRX to engine
+[markername] DTX PTP start
 [markername] ETX ts out
