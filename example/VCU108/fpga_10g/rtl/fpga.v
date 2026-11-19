@@ -594,12 +594,17 @@ core_inst (
     .uart_cts(uart_cts_int),
     /*
      * PTP hardware timestamping
-     * The RX/TX timestamp streams are not used by anything yet
+     * No PTP engine yet: received PTP frames are accepted and dropped, and
+     * the TX timestamp stream is not used
      */
     .ptp_sample_clk(clk_125mhz_int),
     .ptp_ts_96(ptp_ts_96),
-    .rx_ptp_ts_96(),
-    .rx_ptp_ts_valid(),
+    .ptp_rx_axis_tdata(),
+    .ptp_rx_axis_tkeep(),
+    .ptp_rx_axis_tvalid(),
+    .ptp_rx_axis_tready(1'b1),
+    .ptp_rx_axis_tlast(),
+    .ptp_rx_axis_tuser(),
     .tx_ptp_ts_96(),
     .tx_ptp_ts_tag(),
     .tx_ptp_ts_valid(),

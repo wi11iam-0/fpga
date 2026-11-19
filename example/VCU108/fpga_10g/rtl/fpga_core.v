@@ -115,12 +115,22 @@ module fpga_core #
 
     /*
      * PTP hardware timestamping (QSFP28 lane 1 MAC)
-     * All outputs are synchronous to clk
+     * All signals are synchronous to clk. Timestamps are 96 bit time of day:
+     * {seconds[47:0], 2'b00, ns[29:0], fractional ns[15:0]}
      */
     input  wire        ptp_sample_clk,   // free-running, unrelated to clk and the QSFP clocks
     output wire [95:0] ptp_ts_96,        // current PTP time
-    output wire [95:0] rx_ptp_ts_96,     // RX timestamp, valid on the first word of each frame
-    output wire        rx_ptp_ts_valid,  //   leaving the MAC RX FIFO
+
+    // Received PTP frames (Ethertype 0x88F7), from the MAC, with their RX timestamp
+    // Whole Ethernet frame without FCS; tuser = {RX timestamp, bad frame}, the
+    // same on every word of a frame. Other frames go to the UDP stack as before.
+    output wire [63:0] ptp_rx_axis_tdata,
+    output wire [7:0]  ptp_rx_axis_tkeep,
+    output wire        ptp_rx_axis_tvalid,
+    input  wire        ptp_rx_axis_tready,
+    output wire        ptp_rx_axis_tlast,
+    output wire [96:0] ptp_rx_axis_tuser,
+
     output wire [95:0] tx_ptp_ts_96,     // TX timestamp of the frame identified by tx_ptp_ts_tag
     output wire [15:0] tx_ptp_ts_tag,
     output wire        tx_ptp_ts_valid,
@@ -135,7 +145,15 @@ wire mac_rx_axis_tvalid;
 wire mac_rx_axis_tready;
 wire mac_rx_axis_tlast;
 wire mac_rx_axis_tuser;
-wire [96:0] mac_rx_axis_tuser_ptp;  // {RX timestamp, bad frame}
+wire [96:0] mac_rx_axis_tuser_ts;  // {RX timestamp, bad frame}; timestamp unused for these frames
+
+// MAC RX FIFO output, before PTP frames are split off
+wire [63:0] mac_fifo_rx_axis_tdata;
+wire [7:0] mac_fifo_rx_axis_tkeep;
+wire mac_fifo_rx_axis_tvalid;
+wire mac_fifo_rx_axis_tready;
+wire mac_fifo_rx_axis_tlast;
+wire [96:0] mac_fifo_rx_axis_tuser;  // {RX timestamp, bad frame}
 
 wire [63:0] mac_tx_axis_tdata;
 wire [7:0] mac_tx_axis_tkeep;
@@ -440,26 +458,44 @@ ptp_clock_inst (
     .output_pps()
 );
 
-// RX timestamp
+// RX: split PTP frames off at the MAC RX FIFO output
 // With PTP enabled, the MAC puts the timestamp of each received frame in
-// tuser[96:1]. The rest of the design only carries the bad frame flag
-// (tuser[0]), so the timestamp is taken off here, at the MAC RX FIFO output.
-ptp_ts_extract #(
-    .TS_WIDTH(96),
-    .TS_OFFSET(1),
-    .USER_WIDTH(97)
+// tuser[96:1]. PTP frames (Ethertype 0x88F7) leave here on ptp_rx_axis with
+// their timestamp still attached. All other frames continue to the switch and
+// the UDP stack, which only carry the bad frame flag (tuser[0]).
+axis_eth_type_demux #(
+    .DATA_WIDTH(64),
+    .KEEP_WIDTH(8),
+    .USER_WIDTH(97),
+    .ETH_TYPE(16'h88F7)
 )
-rx_ptp_ts_extract_inst (
+ptp_rx_demux_inst (
     .clk(clk),
     .rst(rst),
-    .s_axis_tvalid(mac_rx_axis_tvalid && mac_rx_axis_tready),
-    .s_axis_tlast(mac_rx_axis_tlast),
-    .s_axis_tuser(mac_rx_axis_tuser_ptp),
-    .m_axis_ts(rx_ptp_ts_96),
-    .m_axis_ts_valid(rx_ptp_ts_valid)
+
+    .s_axis_tdata(mac_fifo_rx_axis_tdata),
+    .s_axis_tkeep(mac_fifo_rx_axis_tkeep),
+    .s_axis_tvalid(mac_fifo_rx_axis_tvalid),
+    .s_axis_tready(mac_fifo_rx_axis_tready),
+    .s_axis_tlast(mac_fifo_rx_axis_tlast),
+    .s_axis_tuser(mac_fifo_rx_axis_tuser),
+
+    .m_match_axis_tdata(ptp_rx_axis_tdata),
+    .m_match_axis_tkeep(ptp_rx_axis_tkeep),
+    .m_match_axis_tvalid(ptp_rx_axis_tvalid),
+    .m_match_axis_tready(ptp_rx_axis_tready),
+    .m_match_axis_tlast(ptp_rx_axis_tlast),
+    .m_match_axis_tuser(ptp_rx_axis_tuser),
+
+    .m_other_axis_tdata(mac_rx_axis_tdata),
+    .m_other_axis_tkeep(mac_rx_axis_tkeep),
+    .m_other_axis_tvalid(mac_rx_axis_tvalid),
+    .m_other_axis_tready(mac_rx_axis_tready),
+    .m_other_axis_tlast(mac_rx_axis_tlast),
+    .m_other_axis_tuser(mac_rx_axis_tuser_ts)
 );
 
-assign mac_rx_axis_tuser = mac_rx_axis_tuser_ptp[0];
+assign mac_rx_axis_tuser = mac_rx_axis_tuser_ts[0];
 
 // TX timestamp tag
 // Every transmitted frame is timestamped. The MAC returns each timestamp
@@ -515,12 +551,12 @@ eth_mac_10g_fifo_inst (
     .m_axis_tx_ptp_ts_valid(tx_ptp_ts_valid),
     .m_axis_tx_ptp_ts_ready(1'b1),
 
-    .rx_axis_tdata(mac_rx_axis_tdata),
-    .rx_axis_tkeep(mac_rx_axis_tkeep),
-    .rx_axis_tvalid(mac_rx_axis_tvalid),
-    .rx_axis_tready(mac_rx_axis_tready),
-    .rx_axis_tlast(mac_rx_axis_tlast),
-    .rx_axis_tuser(mac_rx_axis_tuser_ptp),
+    .rx_axis_tdata(mac_fifo_rx_axis_tdata),
+    .rx_axis_tkeep(mac_fifo_rx_axis_tkeep),
+    .rx_axis_tvalid(mac_fifo_rx_axis_tvalid),
+    .rx_axis_tready(mac_fifo_rx_axis_tready),
+    .rx_axis_tlast(mac_fifo_rx_axis_tlast),
+    .rx_axis_tuser(mac_fifo_rx_axis_tuser),
 
     .xgmii_rxd(qsfp_rxd_1),
     .xgmii_rxc(qsfp_rxc_1),

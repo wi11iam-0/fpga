@@ -27,6 +27,7 @@ import os
 
 from scapy.layers.l2 import Ether, ARP
 from scapy.layers.inet import IP, UDP
+from scapy.packet import Raw
 
 import cocotb_test.simulator
 
@@ -38,6 +39,7 @@ from cocotb.utils import get_sim_time, get_time_from_sim_steps
 
 from cocotbext.eth import GmiiFrame, GmiiSource, GmiiSink
 from cocotbext.eth import XgmiiFrame, XgmiiSource, XgmiiSink
+from cocotbext.axi import AxiStreamBus, AxiStreamSink
 
 
 CLK_PERIOD_NS = 6.4  # dut.clk and, on the board, the XGMII clocks (156.25 MHz)
@@ -68,6 +70,43 @@ def build_udp_frame(payload):
     return eth / ip / udp / payload
 
 
+PTP_ETH_TYPE = 0x88F7
+PTP_MULTICAST_MAC = '01:1b:19:00:00:00'
+
+
+def build_ptp_frame(sequence_id, length=44, src='5a:51:52:53:54:55'):
+    """Ethernet frame carrying a PTP message (IEEE 1588 over Ethernet).
+
+    Only the fields that identify the message are filled in (messageType =
+    Sync, versionPTP, messageLength, sequenceId); the rest is a counting
+    pattern. 44 bytes is the length of a Sync, Follow_Up or Delay_Req
+    message; other lengths are used to move where the frame ends on the bus.
+    """
+    msg = bytearray(x % 256 for x in range(length))
+    msg[0] = 0x00                               # transportSpecific 0, messageType 0 (Sync)
+    msg[1] = 0x02                               # versionPTP 2
+    msg[2:4] = length.to_bytes(2, 'big')        # messageLength
+    msg[30:32] = sequence_id.to_bytes(2, 'big') # sequenceId
+    return Ether(src=src, dst=PTP_MULTICAST_MAC, type=PTP_ETH_TYPE) / Raw(bytes(msg))
+
+
+def eth_type(frame):
+    """Ethertype of an Ethernet frame given as bytes."""
+    return int.from_bytes(frame[12:14], 'big')
+
+
+def frame_bytes_without_fcs(frame):
+    """Bytes the MAC passes on for a frame sent with XgmiiFrame.from_payload:
+    the payload, padded to the 60 byte minimum."""
+    return bytes(frame).ljust(60, b'\x00')
+
+
+def axis_tuser_first(frame):
+    """tuser of the first word of an AXI stream frame (cocotbext-axi collapses
+    tuser to one value when it is the same on every word)."""
+    return frame.tuser[0] if isinstance(frame.tuser, list) else frame.tuser
+
+
 class TB:
     def __init__(self, dut, xgmii_clk_period_ns=2.56):
         self.dut = dut
@@ -90,6 +129,9 @@ class TB:
             dut.phy_gmii_clk, dut.phy_gmii_rst, dut.phy_gmii_clk_en)
 
         dut.phy_gmii_clk_en.setimmediatevalue(1)
+
+        # PTP engine port: received PTP frames with their RX timestamps
+        self.ptp_rx_sink = AxiStreamSink(AxiStreamBus.from_prefix(dut, "ptp_rx_axis"), dut.clk, dut.rst)
 
         self.qsfp_source = []
         self.qsfp_sink = []
@@ -156,12 +198,16 @@ class TB:
         ptp_ns = ptp_ts_96_to_ns(self.dut.ptp_ts_96.value.integer)
         return ptp_ns - (get_sim_time("ns") - CLK_PERIOD_NS)
 
-    async def monitor_rx_ptp_ts(self, timestamps):
-        """Append every RX timestamp (in ns) to the list."""
+    async def count_stack_rx_frames(self, counter):
+        """Count frames passed on from the MAC towards the switch and UDP stack.
+
+        counter is a one element list, so the count can be read while this runs.
+        """
+        dut = self.dut
         while True:
-            await RisingEdge(self.dut.clk)
-            if self.dut.rx_ptp_ts_valid.value.integer:
-                timestamps.append(ptp_ts_96_to_ns(self.dut.rx_ptp_ts_96.value.integer))
+            await RisingEdge(dut.clk)
+            if dut.mac_rx_axis_tvalid.value.integer and dut.mac_rx_axis_tready.value.integer and dut.mac_rx_axis_tlast.value.integer:
+                counter[0] += 1
 
     async def monitor_tx_ptp_ts(self, timestamps):
         """Append every TX timestamp to the list as a (tag, ns) tuple."""
@@ -331,11 +377,14 @@ async def run_test(dut):
 
 @cocotb.test()
 async def run_test_ptp(dut):
-    """Check the PTP hardware clock and the RX/TX timestamps of the 10G MAC.
+    """Check the PTP hardware clock and the timestamping of the 10G MAC.
 
-    UDP frames are sent to the echo port on QSFP lane 1. For every frame in
-    and every frame out, the timestamp reported by the DUT is compared with
-    the time the testbench saw the start of the frame on the XGMII interface.
+    RX: PTP frames (Ethertype 0x88F7) mixed with UDP frames are sent into QSFP
+    lane 1. Only the PTP frames must appear on the PTP engine port, unchanged,
+    each with an RX timestamp matching the time the testbench saw it start on
+    the XGMII interface. Everything else must still reach the UDP stack.
+
+    TX: every frame sent gets a TX timestamp, compared the same way.
     """
 
     # Run the XGMII clocks at 156.25 MHz as on the board, rather than at the
@@ -375,10 +424,11 @@ async def run_test_ptp(dut):
 
     tb.log.info("PTP time is simulation time %+f ns", ptp_offset_ns)
 
-    rx_ts_list = []
     tx_ts_list = []
-    cocotb.start_soon(tb.monitor_rx_ptp_ts(rx_ts_list))
     cocotb.start_soon(tb.monitor_tx_ptp_ts(tx_ts_list))
+
+    stack_rx_count = [0]
+    cocotb.start_soon(tb.count_stack_rx_frames(stack_rx_count))
 
     # Frames in the order they cross the XGMII interface, in each direction.
     # The XGMII source appends a copy of each frame to frames_in once it has
@@ -405,24 +455,37 @@ async def run_test_ptp(dut):
 
     frames_out.append(await tb.qsfp_sink[0].recv())
 
-    tb.log.info("send a burst of UDP packets")
+    tb.log.info("send a burst of UDP and PTP frames")
 
-    # Back to back frames of different lengths, so that frames end in every
-    # byte lane and start in both lane 0 and lane 4
-    payloads = [bytes(x % 256 for x in range(n)) for n in (19, 20, 21, 22, 23, 24, 25, 26, 60, 128, 256, 512)]
+    # Back to back, alternating UDP and PTP frames of different lengths, so
+    # that frames end in every byte lane and start in both lane 0 and lane 4
+    udp_payloads = [bytes(x % 256 for x in range(n)) for n in (19, 20, 21, 22, 23, 24, 25, 26, 60, 128, 256, 512)]
+    ptp_pkts = [build_ptp_frame(sequence_id=k, length=44 + k) for k in range(len(udp_payloads))]
 
-    for payload in payloads:
-        frame = XgmiiFrame.from_payload(build_udp_frame(payload).build(), tx_complete=frames_in.append)
-        await tb.qsfp_source[0].send(frame)
+    for udp_payload, ptp_pkt in zip(udp_payloads, ptp_pkts):
+        for pkt in (build_udp_frame(udp_payload), ptp_pkt):
+            await tb.qsfp_source[0].send(XgmiiFrame.from_payload(pkt.build(), tx_complete=frames_in.append))
 
-    for payload in payloads:
+    tb.log.info("check that the UDP frames are echoed")
+
+    for payload in udp_payloads:
         frame = await tb.qsfp_sink[0].recv()
         frames_out.append(frame)
         assert Ether(bytes(frame.get_payload()))[UDP].payload.load == payload
 
+    tb.log.info("check that the PTP frames arrive on the PTP engine port")
+
+    ptp_frames_rx = [await tb.ptp_rx_sink.recv() for k in range(len(ptp_pkts))]
+
     # let the last TX timestamp cross from the TX clock domain
     for k in range(20):
         await RisingEdge(dut.clk)
+
+    assert tb.ptp_rx_sink.empty(), "a frame that is not PTP reached the PTP engine port"
+
+    # every frame that is not PTP still goes to the UDP stack
+    ptp_frames_in = [f for f in frames_in if eth_type(f.get_payload()) == PTP_ETH_TYPE]
+    assert stack_rx_count[0] == len(frames_in) - len(ptp_frames_in)
 
     # The XGMII models report the clock edge at which a word is driven
     # (source) or sampled (sink). The MAC timestamps a frame
@@ -438,18 +501,23 @@ async def run_test_ptp(dut):
     # domains, which settles to within a fraction of a ns.
     max_error_ns = CLK_PERIOD_NS / 4
 
-    tb.log.info("check RX timestamps")
+    tb.log.info("check the PTP frames and their RX timestamps")
 
-    assert len(rx_ts_list) == len(frames_in)
+    assert len(ptp_frames_in) == len(ptp_pkts)
 
-    for frame, ts_ns in zip(frames_in, rx_ts_list):
-        ts_sim_ns = ts_ns - ptp_offset_ns
-        error_ns = ts_sim_ns - (start_time_ns(frame) + rx_capture_delay_ns)
-        tb.log.info("RX frame: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
-            frame.start_lane, start_time_ns(frame), ts_sim_ns, error_ns)
+    for pkt, frame_in, frame_rx in zip(ptp_pkts, ptp_frames_in, ptp_frames_rx):
+        # passed on unchanged and not marked bad
+        assert bytes(frame_rx.tdata) == frame_bytes_without_fcs(pkt.build())
+        tuser = axis_tuser_first(frame_rx)
+        assert tuser & 1 == 0
+
+        ts_sim_ns = ptp_ts_96_to_ns(tuser >> 1) - ptp_offset_ns
+        error_ns = ts_sim_ns - (start_time_ns(frame_in) + rx_capture_delay_ns)
+        tb.log.info("RX PTP frame: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
+            frame_in.start_lane, start_time_ns(frame_in), ts_sim_ns, error_ns)
         assert abs(error_ns) < max_error_ns
 
-    assert {frame.start_lane for frame in frames_in} == {0, 4}
+    assert {frame.start_lane for frame in ptp_frames_in} == {0, 4}
 
     tb.log.info("check TX timestamps")
 
@@ -464,19 +532,6 @@ async def run_test_ptp(dut):
         tb.log.info("TX frame %d: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
             tag, frame.start_lane, start_time_ns(frame), ts_sim_ns, error_ns)
         assert abs(error_ns) < max_error_ns
-
-    tb.log.info("check latency through the FPGA from the timestamps")
-
-    # frames_in[0] is echoed as frames_out[1] (after the ARP exchange), and
-    # each frame of the burst as the frame at the same index
-    echo_pairs = [(0, 1)] + [(k, k) for k in range(2, len(frames_in))]
-
-    for in_index, out_index in echo_pairs:
-        # start of frame in to start of frame out, as reported by the XGMII models
-        measured_ns = (tx_ts_list[out_index][1] - tx_capture_delay_ns) - (rx_ts_list[in_index] - rx_capture_delay_ns)
-        actual_ns = start_time_ns(frames_out[out_index]) - start_time_ns(frames_in[in_index])
-        tb.log.info("echo of frame %d: %.2f ns by timestamps, %.2f ns actual", in_index, measured_ns, actual_ns)
-        assert abs(measured_ns - actual_ns) < 2 * max_error_ns
 
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
@@ -498,6 +553,7 @@ def test_fpga_core(request):
 
     verilog_sources = [
         os.path.join(rtl_dir, f"{dut}.v"),
+        os.path.join(rtl_dir, "axis_eth_type_demux.v"),
         os.path.join(eth_rtl_dir, "eth_mac_1g_fifo.v"),
         os.path.join(eth_rtl_dir, "eth_mac_1g.v"),
         os.path.join(eth_rtl_dir, "axis_gmii_rx.v"),
@@ -509,7 +565,6 @@ def test_fpga_core(request):
         os.path.join(eth_rtl_dir, "lfsr.v"),
         os.path.join(eth_rtl_dir, "ptp_clock.v"),
         os.path.join(eth_rtl_dir, "ptp_clock_cdc.v"),
-        os.path.join(eth_rtl_dir, "ptp_ts_extract.v"),
         os.path.join(eth_rtl_dir, "eth_axis_rx.v"),
         os.path.join(eth_rtl_dir, "eth_axis_tx.v"),
         os.path.join(eth_rtl_dir, "udp_complete_64.v"),
