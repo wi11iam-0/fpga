@@ -128,6 +128,15 @@ module eth_mac_10g_fifo #
     input  wire                       ptp_ts_step,
 
     /*
+     * PTP timestamping status, synchronized to logic_clk
+     * High once the copy of the PTP time in the TX/RX clock domain has locked
+     * to ptp_ts_96; timestamps taken before that are not valid. Always low
+     * when PTP_TS_ENABLE = 0.
+     */
+    output wire                       tx_ptp_locked,
+    output wire                       rx_ptp_locked,
+
+    /*
      * Configuration
      */
     input  wire [7:0]                 cfg_ifg,
@@ -218,6 +227,27 @@ always @(posedge logic_clk or posedge logic_rst) begin
     end
 end
 
+// synchronize PTP lock status into logic clock domain
+// (level signals, so a plain two-register synchronizer is enough)
+wire tx_ptp_locked_int;
+wire rx_ptp_locked_int;
+
+reg [1:0] ptp_locked_sync_reg_1 = 2'd0;
+reg [1:0] ptp_locked_sync_reg_2 = 2'd0;
+
+assign tx_ptp_locked = ptp_locked_sync_reg_2[0];
+assign rx_ptp_locked = ptp_locked_sync_reg_2[1];
+
+always @(posedge logic_clk or posedge logic_rst) begin
+    if (logic_rst) begin
+        ptp_locked_sync_reg_1 <= 2'd0;
+        ptp_locked_sync_reg_2 <= 2'd0;
+    end else begin
+        ptp_locked_sync_reg_1 <= {rx_ptp_locked_int, tx_ptp_locked_int};
+        ptp_locked_sync_reg_2 <= ptp_locked_sync_reg_1;
+    end
+end
+
 // PTP timestamping
 generate
 
@@ -238,7 +268,7 @@ if (PTP_TS_ENABLE) begin : tx_ptp
         .output_ts(tx_ptp_ts_96),
         .output_ts_step(),
         .output_pps(),
-        .locked()
+        .locked(tx_ptp_locked_int)
     );
 
     axis_async_fifo #(
@@ -293,6 +323,7 @@ end else begin
     assign m_axis_tx_ptp_ts_valid = 1'b0;
 
     assign tx_ptp_ts_96 = {PTP_TS_WIDTH{1'b0}};
+    assign tx_ptp_locked_int = 1'b0;
 
 end
 
@@ -313,12 +344,13 @@ if (PTP_TS_ENABLE) begin : rx_ptp
         .output_ts(rx_ptp_ts_96),
         .output_ts_step(),
         .output_pps(),
-        .locked()
+        .locked(rx_ptp_locked_int)
     );
 
 end else begin
 
     assign rx_ptp_ts_96 = {PTP_TS_WIDTH{1'b0}};
+    assign rx_ptp_locked_int = 1'b0;
 
 end
 

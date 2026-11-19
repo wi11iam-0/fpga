@@ -97,16 +97,6 @@ class TB:
         await RisingEdge(self.dut.logic_clk)
 
 
-def ptp_cdc_locked(dut, side):
-    # Icarus: walk the named generate block (dut.rx_ptp.rx_ptp_cdc.locked)
-    # Verilator: attribute access through the generate block fails,
-    # but a full-path lookup works
-    try:
-        return getattr(getattr(dut, f"{side}_ptp"), f"{side}_ptp_cdc").locked
-    except AttributeError:
-        return dut._id(f"{side}_ptp.{side}_ptp_cdc.locked", extended=False)
-
-
 async def run_test_rx(dut, payload_lengths=None, payload_data=None, ifg=12):
 
     tb = TB(dut)
@@ -118,7 +108,7 @@ async def run_test_rx(dut, payload_lengths=None, payload_data=None, ifg=12):
     await tb.reset()
 
     tb.log.info("Wait for PTP CDC lock")
-    while not ptp_cdc_locked(dut, "rx").value.integer:
+    while not dut.rx_ptp_locked.value.integer:
         await RisingEdge(dut.rx_clk)
     for k in range(1000):
         await RisingEdge(dut.rx_clk)
@@ -169,7 +159,7 @@ async def run_test_tx(dut, payload_lengths=None, payload_data=None, ifg=12):
     await tb.reset()
 
     tb.log.info("Wait for PTP CDC lock")
-    while not ptp_cdc_locked(dut, "tx").value.integer:
+    while not dut.tx_ptp_locked.value.integer:
         await RisingEdge(dut.tx_clk)
     for k in range(1000):
         await RisingEdge(dut.tx_clk)
@@ -221,7 +211,7 @@ async def run_test_tx_alignment(dut, payload_data=None, ifg=12):
     await tb.reset()
 
     tb.log.info("Wait for PTP CDC lock")
-    while not ptp_cdc_locked(dut, "tx").value.integer:
+    while not dut.tx_ptp_locked.value.integer:
         await RisingEdge(dut.tx_clk)
     for k in range(1000):
         await RisingEdge(dut.tx_clk)

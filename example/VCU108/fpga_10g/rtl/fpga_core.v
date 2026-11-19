@@ -123,7 +123,9 @@ module fpga_core #
     output wire        rx_ptp_ts_valid,  //   leaving the MAC RX FIFO
     output wire [95:0] tx_ptp_ts_96,     // TX timestamp of the frame identified by tx_ptp_ts_tag
     output wire [15:0] tx_ptp_ts_tag,
-    output wire        tx_ptp_ts_valid
+    output wire        tx_ptp_ts_valid,
+    output wire        tx_ptp_locked,    // PTP time locked in the MAC TX / RX clock domains;
+    output wire        rx_ptp_locked     //   timestamps are not valid until both are high
 );
 
 // AXI between MAC and Ethernet modules
@@ -536,6 +538,8 @@ eth_mac_10g_fifo_inst (
 
     .ptp_ts_96(ptp_ts_96),
     .ptp_ts_step(ptp_ts_step),
+    .tx_ptp_locked(tx_ptp_locked),
+    .rx_ptp_locked(rx_ptp_locked),
 
     .cfg_ifg(8'd12),
     .cfg_tx_enable(1'b1),

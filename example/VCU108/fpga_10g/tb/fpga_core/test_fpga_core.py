@@ -142,12 +142,7 @@ class TB:
 
         Timestamps taken before the two ptp_clock_cdc instances lock are not valid.
         """
-        mac = self.dut.eth_mac_10g_fifo_inst
-        # full-path lookup: Verilator does not expose the rx_ptp/tx_ptp generate blocks as handles
-        rx_locked = mac._id("rx_ptp.rx_ptp_cdc.locked", extended=False)
-        tx_locked = mac._id("tx_ptp.tx_ptp_cdc.locked", extended=False)
-
-        while not (rx_locked.value.integer and tx_locked.value.integer):
+        while not (self.dut.rx_ptp_locked.value.integer and self.dut.tx_ptp_locked.value.integer):
             await RisingEdge(self.dut.clk)
 
     async def ptp_time_offset_ns(self):

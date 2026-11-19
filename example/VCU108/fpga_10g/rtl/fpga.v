@@ -602,7 +602,9 @@ core_inst (
     .rx_ptp_ts_valid(),
     .tx_ptp_ts_96(),
     .tx_ptp_ts_tag(),
-    .tx_ptp_ts_valid()
+    .tx_ptp_ts_valid(),
+    .tx_ptp_locked(),
+    .rx_ptp_locked()
 );
 
 endmodule
