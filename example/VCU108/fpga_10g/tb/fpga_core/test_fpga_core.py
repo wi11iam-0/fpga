@@ -34,12 +34,12 @@ import cocotb_test.simulator
 import cocotb
 from cocotb.log import SimLog
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import RisingEdge, with_timeout
 from cocotb.utils import get_sim_time, get_time_from_sim_steps
 
 from cocotbext.eth import GmiiFrame, GmiiSource, GmiiSink
 from cocotbext.eth import XgmiiFrame, XgmiiSource, XgmiiSink
-from cocotbext.axi import AxiStreamBus, AxiStreamSink
+from cocotbext.axi import AxiStreamBus, AxiStreamSink, AxiStreamSource, AxiStreamFrame
 
 
 CLK_PERIOD_NS = 6.4  # dut.clk and, on the board, the XGMII clocks (156.25 MHz)
@@ -130,8 +130,11 @@ class TB:
 
         dut.phy_gmii_clk_en.setimmediatevalue(1)
 
-        # PTP engine port: received PTP frames with their RX timestamps
+        # PTP engine port: received PTP frames with their RX timestamps, PTP
+        # frames to send, and the TX timestamps of the frames sent
         self.ptp_rx_sink = AxiStreamSink(AxiStreamBus.from_prefix(dut, "ptp_rx_axis"), dut.clk, dut.rst)
+        self.ptp_tx_source = AxiStreamSource(AxiStreamBus.from_prefix(dut, "ptp_tx_axis"), dut.clk, dut.rst)
+        dut.tx_ptp_ts_ready.setimmediatevalue(1)
 
         self.qsfp_source = []
         self.qsfp_sink = []
@@ -379,12 +382,19 @@ async def run_test(dut):
 async def run_test_ptp(dut):
     """Check the PTP hardware clock and the timestamping of the 10G MAC.
 
+    The testbench acts as the PTP engine, on the fpga_core PTP ports.
+
     RX: PTP frames (Ethertype 0x88F7) mixed with UDP frames are sent into QSFP
     lane 1. Only the PTP frames must appear on the PTP engine port, unchanged,
     each with an RX timestamp matching the time the testbench saw it start on
     the XGMII interface. Everything else must still reach the UDP stack.
 
-    TX: every frame sent gets a TX timestamp, compared the same way.
+    TX: the engine sends PTP frames, choosing each frame's tag and whether to
+    timestamp it, while the stack is sending echoes. Exactly the frames sent
+    with timestamping enabled must get a TX timestamp, with their tag and
+    matching the time they started on XGMII. The testbench loops each PTP
+    frame back into RX, and the loop delay worked out from its TX and RX
+    timestamps must match the delay seen on XGMII.
     """
 
     # Run the XGMII clocks at 156.25 MHz as on the board, rather than at the
@@ -430,11 +440,10 @@ async def run_test_ptp(dut):
     stack_rx_count = [0]
     cocotb.start_soon(tb.count_stack_rx_frames(stack_rx_count))
 
-    # Frames in the order they cross the XGMII interface, in each direction.
-    # The XGMII source appends a copy of each frame to frames_in once it has
-    # been sent; that copy records when the frame was on the interface.
+    # Frames in the order they cross into the MAC on XGMII. The XGMII source
+    # appends a copy of each frame to frames_in once it has been sent; that
+    # copy records when the frame was on the interface.
     frames_in = []
-    frames_out = []
 
     tb.log.info("resolve ARP with a first UDP packet")
 
@@ -443,7 +452,6 @@ async def run_test_ptp(dut):
     await tb.qsfp_source[0].send(first_frame)
 
     arp_request_frame = await tb.qsfp_sink[0].recv()
-    frames_out.append(arp_request_frame)
     assert Ether(bytes(arp_request_frame.get_payload()))[ARP].op == 1
 
     arp_reply_pkt = Ether(src=first_pkt.src, dst=first_pkt.dst) / ARP(
@@ -453,7 +461,8 @@ async def run_test_ptp(dut):
     arp_reply_frame = XgmiiFrame.from_payload(arp_reply_pkt.build(), tx_complete=frames_in.append)
     await tb.qsfp_source[0].send(arp_reply_frame)
 
-    frames_out.append(await tb.qsfp_sink[0].recv())
+    echo_frame = await tb.qsfp_sink[0].recv()
+    assert Ether(bytes(echo_frame.get_payload()))[UDP].payload.load == bytes(range(32))
 
     tb.log.info("send a burst of UDP and PTP frames")
 
@@ -470,7 +479,6 @@ async def run_test_ptp(dut):
 
     for payload in udp_payloads:
         frame = await tb.qsfp_sink[0].recv()
-        frames_out.append(frame)
         assert Ether(bytes(frame.get_payload()))[UDP].payload.load == payload
 
     tb.log.info("check that the PTP frames arrive on the PTP engine port")
@@ -519,19 +527,97 @@ async def run_test_ptp(dut):
 
     assert {frame.start_lane for frame in ptp_frames_in} == {0, 4}
 
-    tb.log.info("check TX timestamps")
+    tb.log.info("send PTP frames from the PTP engine port while the stack is sending echoes")
 
-    assert len(tx_ts_list) == len(frames_out)
+    # UDP frames for the stack to echo, so that its frames compete with the
+    # PTP frames for the MAC
+    tx_udp_payloads = udp_payloads[:6]
+    for payload in tx_udp_payloads:
+        await tb.qsfp_source[0].send(XgmiiFrame.from_payload(build_udp_frame(payload).build()))
 
-    # the tag is a count of transmitted frames, starting from 0 at reset
-    assert [tag for tag, ts_ns in tx_ts_list] == list(range(len(frames_out)))
+    # The engine chooses each frame's tag (here its PTP sequenceId) and whether
+    # to timestamp it. One frame is sent without a timestamp.
+    tx_ptp = []  # (packet, tag, timestamped)
+    for k in range(8):
+        sequence_id = 100 + k
+        pkt = build_ptp_frame(sequence_id=sequence_id, length=44 + 3 * k, src='02:00:00:00:00:00')
+        timestamped = k != 3
+        tx_ptp.append((pkt, sequence_id, timestamped))
 
-    for frame, (tag, ts_ns) in zip(frames_out, tx_ts_list):
-        ts_sim_ns = ts_ns - ptp_offset_ns
+    async def send_ptp_frames():
+        # spaced out so that they overlap with the echoes leaving the stack
+        for pkt, sequence_id, timestamped in tx_ptp:
+            await tb.ptp_tx_source.send(AxiStreamFrame(pkt.build(), tuser=(sequence_id << 2) | (int(timestamped) << 1)))
+            await tb.ptp_tx_source.wait()
+            for k in range(30):
+                await RisingEdge(dut.clk)
+
+    cocotb.start_soon(send_ptp_frames())
+
+    # Collect what comes out. Loop each PTP frame straight back into RX, as if
+    # the far end of the link returned it.
+    ptp_frames_out = []
+    loop_frames_in = []
+    out_order = []
+    for k in range(len(tx_udp_payloads) + len(tx_ptp)):
+        frame = await with_timeout(tb.qsfp_sink[0].recv(), 100, "us")
+        payload = bytes(frame.get_payload())
+        if eth_type(payload) == PTP_ETH_TYPE:
+            out_order.append("PTP")
+            ptp_frames_out.append(frame)
+            await tb.qsfp_source[0].send(XgmiiFrame.from_payload(payload, tx_complete=loop_frames_in.append))
+        else:
+            out_order.append("UDP")
+            assert Ether(payload)[UDP].payload.load in tx_udp_payloads
+
+    tb.log.info("order on XGMII TX: %s", " ".join(out_order))
+
+    # the two sources really did share the MAC: their frames are interleaved
+    assert out_order.index("UDP") < len(out_order) - 1 - out_order[::-1].index("PTP")
+
+    loop_frames_rx = [await with_timeout(tb.ptp_rx_sink.recv(), 100, "us") for k in range(len(tx_ptp))]
+
+    # let the last TX timestamp cross from the TX clock domain
+    for k in range(20):
+        await RisingEdge(dut.clk)
+
+    tb.log.info("check the PTP frames sent and their TX timestamps")
+
+    for (pkt, tag, timestamped), frame in zip(tx_ptp, ptp_frames_out):
+        assert bytes(frame.get_payload()) == frame_bytes_without_fcs(pkt.build())
+
+    # Only frames sent with timestamping enabled get a TX timestamp: not the
+    # frames from the stack (ARP, echoes), and not the PTP frame sent without
+    assert [tag for tag, ts_ns in tx_ts_list] == [tag for pkt, tag, timestamped in tx_ptp if timestamped]
+
+    tx_ts = dict(tx_ts_list)
+
+    for (pkt, tag, timestamped), frame in zip(tx_ptp, ptp_frames_out):
+        if not timestamped:
+            continue
+        ts_sim_ns = tx_ts[tag] - ptp_offset_ns
         error_ns = ts_sim_ns - (start_time_ns(frame) + tx_capture_delay_ns)
-        tb.log.info("TX frame %d: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
+        tb.log.info("TX PTP frame, tag %d: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
             tag, frame.start_lane, start_time_ns(frame), ts_sim_ns, error_ns)
         assert abs(error_ns) < max_error_ns
+
+    tb.log.info("check the looped back frames and the loop delay from their timestamps")
+
+    for (pkt, tag, timestamped), frame_out, frame_in, frame_rx in zip(tx_ptp, ptp_frames_out, loop_frames_in, loop_frames_rx):
+        assert bytes(frame_rx.tdata) == frame_bytes_without_fcs(pkt.build())
+        rx_ts_ns = ptp_ts_96_to_ns(axis_tuser_first(frame_rx) >> 1)
+
+        error_ns = (rx_ts_ns - ptp_offset_ns) - (start_time_ns(frame_in) + rx_capture_delay_ns)
+        assert abs(error_ns) < max_error_ns
+
+        if timestamped:
+            # start of frame out to start of frame back in, as a PTP engine
+            # would measure it, and as seen by the XGMII models
+            measured_ns = (rx_ts_ns - rx_capture_delay_ns) - (tx_ts[tag] - tx_capture_delay_ns)
+            actual_ns = start_time_ns(frame_in) - start_time_ns(frame_out)
+            tb.log.info("PTP frame, tag %d: loop delay %.3f ns from timestamps, %.3f ns on XGMII",
+                tag, measured_ns, actual_ns)
+            assert abs(measured_ns - actual_ns) < 2 * max_error_ns
 
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
@@ -587,6 +673,7 @@ def test_fpga_core(request):
         os.path.join(axis_rtl_dir, "axis_adapter.v"),
         os.path.join(axis_rtl_dir, "axis_fifo.v"),
         os.path.join(axis_rtl_dir, "axis_switch.v"),
+        os.path.join(axis_rtl_dir, "axis_arb_mux.v"),
         os.path.join(axis_rtl_dir, "axis_register.v"),
         os.path.join(axis_rtl_dir, "axis_async_fifo.v"),
         os.path.join(axis_rtl_dir, "axis_async_fifo_adapter.v"),

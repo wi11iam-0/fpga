@@ -64,6 +64,7 @@ VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/priority_encoder.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_adapter.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_fifo.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_switch.v
+VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_arb_mux.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_register.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_async_fifo.v
 VERILOG_SOURCES += ../../lib/eth/lib/axis/rtl/axis_async_fifo_adapter.v
