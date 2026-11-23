@@ -47,4 +47,13 @@ foreach inst [get_cells -hier -regexp -filter {(ORIG_REF_NAME =~ "eth_mac_(10g|1
 
         set_max_delay -from [get_cells $inst/tx_sync_reg_1_reg[*]] -to [get_cells $inst/tx_sync_reg_2_reg[*]] -datapath_only $src_clk_period
     }
+
+    # PTP lock status (level signals from the TX/RX clock domains)
+    set sync_ffs [get_cells -hier -regexp ".*/ptp_locked_sync_reg_\[12\]_reg\\\[\\d+\\\]" -filter "PARENT == $inst"]
+
+    if {[llength $sync_ffs]} {
+        set_property ASYNC_REG TRUE $sync_ffs
+
+        set_false_path -to [get_cells $inst/ptp_locked_sync_reg_1_reg[*]]
+    }
 }
