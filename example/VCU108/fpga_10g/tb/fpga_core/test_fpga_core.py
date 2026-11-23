@@ -669,6 +669,10 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
             tag, frame.start_lane, start_time_ns(frame, CLK_PERIOD_NS), ts_sim_ns, error_ns)
         assert abs(error_ns) < max_error_ns
 
+    # as on RX, frames starting in both lanes, so that the half cycle added
+    # for a start in lane 4 is checked on TX too
+    assert {frame.start_lane for (pkt, tag, timestamped), frame in zip(tx_ptp, ptp_frames_out) if timestamped} == {0, 4}
+
     tb.log.info("check the looped back frames and the loop delay from their timestamps")
 
     for (pkt, tag, timestamped), frame_out, frame_in, frame_rx in zip(tx_ptp, ptp_frames_out, loop_frames_in, loop_frames_rx):
