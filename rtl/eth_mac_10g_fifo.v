@@ -253,6 +253,9 @@ generate
 
 if (PTP_TS_ENABLE) begin : tx_ptp
     
+    wire tx_ptp_cdc_locked;
+    reg tx_ptp_locked_reg = 1'b0;
+
     ptp_clock_cdc #(
         .TS_WIDTH(PTP_TS_WIDTH),
         .NS_WIDTH(6)
@@ -268,8 +271,20 @@ if (PTP_TS_ENABLE) begin : tx_ptp
         .output_ts(tx_ptp_ts_96),
         .output_ts_step(),
         .output_pps(),
-        .locked(tx_ptp_locked_int)
+        .locked(tx_ptp_cdc_locked)
     );
+
+    // ptp_clock_cdc drives locked from logic (an AND of three registers), which
+    // must not feed a synchronizer directly: register it in tx_clk first
+    always @(posedge tx_clk) begin
+        tx_ptp_locked_reg <= tx_ptp_cdc_locked;
+
+        if (tx_rst) begin
+            tx_ptp_locked_reg <= 1'b0;
+        end
+    end
+
+    assign tx_ptp_locked_int = tx_ptp_locked_reg;
 
     axis_async_fifo #(
         .DEPTH(TX_PTP_TS_FIFO_DEPTH),
@@ -329,6 +344,9 @@ end
 
 if (PTP_TS_ENABLE) begin : rx_ptp
 
+    wire rx_ptp_cdc_locked;
+    reg rx_ptp_locked_reg = 1'b0;
+
     ptp_clock_cdc #(
         .TS_WIDTH(PTP_TS_WIDTH),
         .NS_WIDTH(6)
@@ -344,8 +362,19 @@ if (PTP_TS_ENABLE) begin : rx_ptp
         .output_ts(rx_ptp_ts_96),
         .output_ts_step(),
         .output_pps(),
-        .locked(rx_ptp_locked_int)
+        .locked(rx_ptp_cdc_locked)
     );
+
+    // register the lock flag in rx_clk before it crosses to logic_clk (see TX)
+    always @(posedge rx_clk) begin
+        rx_ptp_locked_reg <= rx_ptp_cdc_locked;
+
+        if (rx_rst) begin
+            rx_ptp_locked_reg <= 1'b0;
+        end
+    end
+
+    assign rx_ptp_locked_int = rx_ptp_locked_reg;
 
 end else begin
 
