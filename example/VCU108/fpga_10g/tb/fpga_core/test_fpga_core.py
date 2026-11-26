@@ -51,6 +51,14 @@ CLK_PERIOD_FS = 6400000
 # given in fs so that they are exact (the simulator runs at 1 fs precision).
 RX_CLK_200PPM_FAST_PERIOD_FS = 6398720
 
+# Smaller offsets, more typical of two real oscillators, to swap in for the one
+# above. The RX timestamp error drifts through one cycle in 6.4 ns / offset:
+# 64 us at 100 ppm, 128 us at 50 ppm, 320 us at 20 ppm, so a run of the test
+# sees less of that cycle the smaller the offset.
+RX_CLK_100PPM_FAST_PERIOD_FS = 6399360
+RX_CLK_50PPM_FAST_PERIOD_FS = 6399680
+RX_CLK_20PPM_FAST_PERIOD_FS = 6399872
+
 # How far an RX timestamp may be from the right time.
 # With rx_clk the same as clk, the RX copy of the PTP time settles to within a
 # fraction of a ns, so timestamps are held to a quarter of a clock cycle.
@@ -431,7 +439,13 @@ async def run_test_ptp_same_rx_clock(dut):
     await check_ptp_timestamping(dut, CLK_PERIOD_FS, RX_MAX_ERROR_SAME_CLOCK_NS)
 
 
-async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
+@cocotb.test()
+async def run_test_ptp_readable_output(dut):
+    """run_test_ptp without the testbench models' own output, leaving only the test's lines."""
+    await check_ptp_timestamping(dut, RX_CLK_20PPM_FAST_PERIOD_FS, RX_MAX_ERROR_200PPM_NS, output_clean=True)
+
+
+async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns, output_clean=False):
     """Check the PTP hardware clock and the timestamping of the 10G MAC.
 
     The testbench acts as the PTP engine, on the fpga_core PTP ports.
@@ -451,7 +465,18 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     matching the time they started on XGMII. The testbench loops each PTP
     frame back into RX, and the loop delay worked out from its TX and RX
     timestamps must match the delay seen on XGMII.
+
+    output_clean: hide the testbench models' own output (a banner from each
+    model and a dump of every frame), leaving only the test's lines.
     """
+
+    gpi_log_level = logging.getLogger("gpi").level
+    if output_clean:
+        # the models log under cocotb.fpga_core.<signal>; also hide the
+        # harmless "VPI error" for the TARGET string parameter that cocotb
+        # prints while the models look up the design's signals
+        logging.getLogger(f"cocotb.{dut._name}").setLevel(logging.WARNING)
+        logging.getLogger("gpi").setLevel(logging.CRITICAL)
 
     # Run the XGMII clocks at board rates, rather than at the faster rate used
     # by run_test: the accuracy of a timestamp is set by the period of the
@@ -460,12 +485,23 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     tb = TB(dut, xgmii_rx_clk_period_fs=rx_clk_period_fs, xgmii_tx_clk_period_fs=CLK_PERIOD_FS)
     rx_clk_period_ns = rx_clk_period_fs / 1e6
 
-    tb.log.info("XGMII RX clock period %.5f ns (%+.0f ppm against clk), RX timestamp limit %.1f ns",
-        rx_clk_period_ns, (CLK_PERIOD_NS / rx_clk_period_ns - 1) * 1e6, rx_max_error_ns)
+    logging.getLogger("gpi").setLevel(gpi_log_level)
+
+    tb.log.info("RX clock %+.0f ppm against clk, RX timestamps must be within %.1f ns",
+        (CLK_PERIOD_NS / rx_clk_period_ns - 1) * 1e6, rx_max_error_ns)
+
+    def section(msg, blank_before=True):
+        # heading for each part of the test, with a blank line either side
+        # (blank_before=False straight after another heading, which already
+        # left one)
+        if blank_before:
+            print()
+        tb.log.info(msg)
+        print()
 
     await tb.init()
 
-    tb.log.info("check PTP clock rate")
+    section("check PTP clock rate")
 
     # the PTP clock is held at 0 until the reset released by tb.init() has taken effect
     for k in range(10):
@@ -477,12 +513,12 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
         await RisingEdge(dut.clk)
     elapsed_ns = ptp_ts_96_to_ns(dut.ptp_ts_96.value.integer) - start_ns
 
-    tb.log.info("PTP clock advanced %f ns in %d cycles", elapsed_ns, cycles)
+    tb.log.info("PTP clock advanced %.3f ns in %d cycles", elapsed_ns, cycles)
 
     # ptp_clock evens out its rounding error every 5 cycles, leaving less than 1e-4 ns
     assert abs(elapsed_ns - cycles * CLK_PERIOD_NS) < 1e-3
 
-    tb.log.info("wait for PTP CDC lock")
+    section("wait for PTP CDC lock")
 
     await tb.wait_ptp_locked()
 
@@ -493,13 +529,13 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
 
     ptp_offset_ns = await tb.ptp_time_offset_ns()
 
-    tb.log.info("PTP time is simulation time %+f ns", ptp_offset_ns)
+    tb.log.info("PTP time = simulation time %+.1f ns", ptp_offset_ns)
 
-    tb.log.info("check how closely the RX copy of the PTP time tracks the PTP clock")
+    section("check how closely the RX copy of the PTP time tracks the PTP clock")
 
     copy_errors = await tb.measure_rx_copy_error_ns(ptp_offset_ns, rx_clk_period_ns, 40000)
-    tb.log.info("RX copy error over %d rx_clk edges: min %+.3f ns, max %+.3f ns, mean %+.3f ns",
-        len(copy_errors), min(copy_errors), max(copy_errors), sum(copy_errors) / len(copy_errors))
+    tb.log.info("RX copy of the PTP time: error %+.2f to %+.2f ns, average %+.2f ns",
+        min(copy_errors), max(copy_errors), sum(copy_errors) / len(copy_errors))
     assert max(abs(e) for e in copy_errors) < rx_max_error_ns
 
     tx_ts_list = []
@@ -513,7 +549,7 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     # copy records when the frame was on the interface.
     frames_in = []
 
-    tb.log.info("resolve ARP with a first UDP packet")
+    section("resolve ARP with a first UDP packet")
 
     first_pkt = build_udp_frame(bytes(range(32)))
     first_frame = XgmiiFrame.from_payload(first_pkt.build(), tx_complete=frames_in.append)
@@ -532,7 +568,7 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     echo_frame = await tb.qsfp_sink[0].recv()
     assert Ether(bytes(echo_frame.get_payload()))[UDP].payload.load == bytes(range(32))
 
-    tb.log.info("send a burst of UDP and PTP frames")
+    section("send a burst of UDP and PTP frames", blank_before=False)
 
     # Back to back, alternating UDP and PTP frames of different lengths, so
     # that frames end in every byte lane and start in both lane 0 and lane 4
@@ -543,13 +579,13 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
         for pkt in (build_udp_frame(udp_payload), ptp_pkt):
             await tb.qsfp_source[0].send(XgmiiFrame.from_payload(pkt.build(), tx_complete=frames_in.append))
 
-    tb.log.info("check that the UDP frames are echoed")
+    section("check that the UDP frames are echoed", blank_before=False)
 
     for payload in udp_payloads:
         frame = await tb.qsfp_sink[0].recv()
         assert Ether(bytes(frame.get_payload()))[UDP].payload.load == payload
 
-    tb.log.info("check that the PTP frames arrive on the PTP engine port")
+    section("check that the PTP frames arrive on the PTP engine port", blank_before=False)
 
     ptp_frames_rx = [await tb.ptp_rx_sink.recv() for k in range(len(ptp_pkts))]
 
@@ -577,11 +613,11 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     # a fraction of a ns. RX timestamps are held to rx_max_error_ns.
     max_error_ns = CLK_PERIOD_NS / 4
 
-    tb.log.info("check the PTP frames and their RX timestamps")
+    section("check the PTP frames and their RX timestamps", blank_before=False)
 
     assert len(ptp_frames_in) == len(ptp_pkts)
 
-    for pkt, frame_in, frame_rx in zip(ptp_pkts, ptp_frames_in, ptp_frames_rx):
+    for seq, (pkt, frame_in, frame_rx) in enumerate(zip(ptp_pkts, ptp_frames_in, ptp_frames_rx)):
         # passed on unchanged and not marked bad
         assert bytes(frame_rx.tdata) == frame_bytes_without_fcs(pkt.build())
         tuser = axis_tuser_first(frame_rx)
@@ -589,13 +625,12 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
 
         ts_sim_ns = ptp_ts_96_to_ns(tuser >> 1) - ptp_offset_ns
         error_ns = ts_sim_ns - (start_time_ns(frame_in, rx_clk_period_ns) + rx_capture_delay_ns)
-        tb.log.info("RX PTP frame: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
-            frame_in.start_lane, start_time_ns(frame_in, rx_clk_period_ns), ts_sim_ns, error_ns)
+        tb.log.info("RX PTP frame %d (start lane %d): timestamp error %+.2f ns", seq, frame_in.start_lane, error_ns)
         assert abs(error_ns) < rx_max_error_ns
 
     assert {frame.start_lane for frame in ptp_frames_in} == {0, 4}
 
-    tb.log.info("send PTP frames from the PTP engine port while the stack is sending echoes")
+    section("send PTP frames from the PTP engine port while the stack is sending echoes")
 
     # UDP frames for the stack to echo, so that its frames compete with the
     # PTP frames for the MAC
@@ -604,9 +639,10 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
         await tb.qsfp_source[0].send(XgmiiFrame.from_payload(build_udp_frame(payload).build()))
 
     # The engine chooses each frame's tag (here its PTP sequenceId) and whether
-    # to timestamp it. One frame is sent without a timestamp.
+    # to timestamp it. One frame is sent without a timestamp. 30 frames, all
+    # looped back, to show how the RX timestamp error moves over time.
     tx_ptp = []  # (packet, tag, timestamped)
-    for k in range(8):
+    for k in range(30):
         sequence_id = 100 + k
         pkt = build_ptp_frame(sequence_id=sequence_id, length=44 + 3 * k, src='02:00:00:00:00:00')
         timestamped = k != 3
@@ -649,7 +685,7 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
     for k in range(20):
         await RisingEdge(dut.clk)
 
-    tb.log.info("check the PTP frames sent and their TX timestamps")
+    section("check the PTP frames sent and their TX timestamps")
 
     for (pkt, tag, timestamped), frame in zip(tx_ptp, ptp_frames_out):
         assert bytes(frame.get_payload()) == frame_bytes_without_fcs(pkt.build())
@@ -665,22 +701,21 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
             continue
         ts_sim_ns = tx_ts[tag] - ptp_offset_ns
         error_ns = ts_sim_ns - (start_time_ns(frame, CLK_PERIOD_NS) + tx_capture_delay_ns)
-        tb.log.info("TX PTP frame, tag %d: start lane %d at %.2f ns, timestamp %.2f ns, error %+.3f ns",
-            tag, frame.start_lane, start_time_ns(frame, CLK_PERIOD_NS), ts_sim_ns, error_ns)
+        tb.log.info("TX PTP frame, tag %d (start lane %d): timestamp error %+.2f ns", tag, frame.start_lane, error_ns)
         assert abs(error_ns) < max_error_ns
 
     # as on RX, frames starting in both lanes, so that the half cycle added
     # for a start in lane 4 is checked on TX too
     assert {frame.start_lane for (pkt, tag, timestamped), frame in zip(tx_ptp, ptp_frames_out) if timestamped} == {0, 4}
 
-    tb.log.info("check the looped back frames and the loop delay from their timestamps")
+    section("check the looped back frames and the loop delay from their timestamps")
 
     for (pkt, tag, timestamped), frame_out, frame_in, frame_rx in zip(tx_ptp, ptp_frames_out, loop_frames_in, loop_frames_rx):
         assert bytes(frame_rx.tdata) == frame_bytes_without_fcs(pkt.build())
         rx_ts_ns = ptp_ts_96_to_ns(axis_tuser_first(frame_rx) >> 1)
 
         error_ns = (rx_ts_ns - ptp_offset_ns) - (start_time_ns(frame_in, rx_clk_period_ns) + rx_capture_delay_ns)
-        tb.log.info("looped PTP frame, tag %d: RX timestamp error %+.3f ns", tag, error_ns)
+        tb.log.info("looped PTP frame, tag %d: RX timestamp error %+.2f ns", tag, error_ns)
         assert abs(error_ns) < rx_max_error_ns
 
         if timestamped:
@@ -688,9 +723,12 @@ async def check_ptp_timestamping(dut, rx_clk_period_fs, rx_max_error_ns):
             # would measure it, and as seen by the XGMII models
             measured_ns = (rx_ts_ns - rx_capture_delay_ns) - (tx_ts[tag] - tx_capture_delay_ns)
             actual_ns = start_time_ns(frame_in, rx_clk_period_ns) - start_time_ns(frame_out, CLK_PERIOD_NS)
-            tb.log.info("PTP frame, tag %d: loop delay %.3f ns from timestamps, %.3f ns on XGMII",
-                tag, measured_ns, actual_ns)
+            tb.log.info("looped PTP frame, tag %d: loop delay error %+.2f ns", tag, measured_ns - actual_ns)
             assert abs(measured_ns - actual_ns) < rx_max_error_ns + max_error_ns
+
+        print()  # blank line after each frame's lines
+
+    logging.getLogger(f"cocotb.{dut._name}").setLevel(logging.NOTSET)
 
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
